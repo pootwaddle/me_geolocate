@@ -1,0 +1,50 @@
+//url := fmt.Sprintf("http://api.geoiplookup.net/?query=%s", g.IP)
+//returns xml, seems like older database
+//requires parsing hack
+
+type GeoIPData struct {
+	IP          string   `json:"ip"`
+	Routable    bool     `json:"routable"`
+	Host        string   `json:"host"`
+	ISP         string   `json:"isp"`
+	City        string   `json:"city"`
+	CountryCode string   `json:"countrycode"`
+	CountryName string   `json:"countryname"`
+	Latitude    float64  `json:"latitude"`
+	Longitude   float64  `json:"longitude"`
+	Located     bool     `json:"located"`
+	Errmsg      []string `json:"errmsg"`
+}
+
+respStr := string(byt)
+
+respStr = strings.Replace(respStr, "</", "\t", -1)
+respStr = strings.Replace(respStr, "<", "\t", -1)
+respStr = strings.Replace(respStr, ">", "\t", -1)
+
+strArray := strings.Split(respStr, "\t")
+
+g.Host = strArray[14]
+g.ISP = strArray[18]
+g.City = strArray[22]
+g.CountryCode = strArray[26]
+g.CountryName = strArray[30]
+
+if val, err := strconv.ParseFloat(strArray[34], 64); err == nil {
+	g.Latitude = val
+}
+if val, err := strconv.ParseFloat(strArray[38], 64); err == nil {
+	g.Longitude = val
+}
+
+if strings.Trim(g.CountryCode, " ") != "" ||
+	strings.Trim(g.ISP, " ") != "" {
+	g.Located = true
+}
+
+if !g.Located || strings.Trim(g.CountryCode, " ") == "" {
+	g.ISP = "-----"
+	g.CountryCode = "--"
+	g.City = "-----"
+	g.CountryName = "-----"
+}

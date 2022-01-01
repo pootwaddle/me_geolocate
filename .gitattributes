@@ -1,0 +1,35 @@
+# All
+*          text=auto eol=lf
+
+# YAML
+*.yml      text=text eol=lf
+
+# HashiCorp configuration language
+*.hcl      text=text eol=lf
+
+# Jinja
+*.j2       text=text eol=lf
+
+# Python
+*.py       text=text eol=lf
+
+# Shell
+*.sh       text=text eol=lf
+
+# Windows Scripts
+*.bat      text=text eol=crlf
+*.cmd      text=text eol=crlf
+*.ps1      text=text eol=crlf
+*.psm      text=text eol=crlf
+*.vbs      text=text eol=crlf
+
+# Markdown
+*.md       text=text eol=lf
+
+# Certificate Files
+*.key      text=text eol=lf
+*.pem      text=text eol=lf
+
+# Docker
+Dockerfile*   text=text eol=lf
+.dockerignore text=text eol=lf
