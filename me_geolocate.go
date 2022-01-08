@@ -109,6 +109,13 @@ func (g *GeoIPData) add2LocalCache(localCache map[string]string) {
 
 }
 
+func (g *GeoIPData) CheckOctets(o string) {
+	octets := strings.Split(g.IP, ".")
+	if len(octets) == 3 {
+		g.IP = g.IP + o
+	}
+}
+
 // GetGeoData initializes a search for the geoLocation of an IP.  We are passed a pointer to a redis Client or <nil>
 // a localCache (map structure) the IP we want and finally the TTL for how long to keep the IP in the Redis cache (in minutes)
 func GetGeoData(redisClient *redis.Client, localCache map[string]string, ttl int, ip string) GeoIPData {
@@ -119,6 +126,8 @@ func GetGeoData(redisClient *redis.Client, localCache map[string]string, ttl int
 		City:        "-----",
 		CountryName: "-----",
 	}
+
+	geo.CheckOctets(".112")
 
 	var found bool
 
