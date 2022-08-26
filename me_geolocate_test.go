@@ -1,6 +1,7 @@
 package me_geolocate
 
 import (
+	"os"
 	"testing"
 
 	"github.com/go-redis/redis/v8"
@@ -9,8 +10,14 @@ import (
 // TestHelloName calls greetings.Hello with a name, checking
 // for a valid return value.
 func TestGetGeoData(t *testing.T) {
+
+	redis_addr := os.Getenv("REDIS_CONF")
+	if redis_addr == "" {
+		redis_addr = "127.0.0.1:6379"
+	}
+
 	rc := redis.NewClient(&redis.Options{
-		Addr:     "192.168.106.143:6379",
+		Addr:     redis_addr,
 		Password: "",
 		DB:       0,
 	})
