@@ -160,6 +160,10 @@ func GetGeoData(redisClient *redis.Client, localCache map[string]string, ttl int
 
 	//finally, call the location service
 	geo.obtainGeoDat()
+	if geo.CountryCode == "--" {
+		return geo
+	}
+
 	if redisClient != nil {
 		geo.add2RedisCache(redisClient, ttl)
 	} else {
