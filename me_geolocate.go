@@ -1,8 +1,7 @@
 // Package geolocate handles the lookup of geo IP data from https://geoiplookup.io/api
 // It looks first in the Redis cache
-// If no Redis configuration it looks in program-defined map
-// And finally, on a miss to either of the caches, it makes a call to
-// https://json.geoiplookup.io/8.8.8.8 for the data and adds the data to the appropriate cache for next time
+// And finally, on a miss to cache, it makes a call to
+// https://json.geoiplookup.io/8.8.8.8 for the data and adds the data to the cache for next time
 package me_geolocate
 
 import (
@@ -11,10 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -55,6 +53,19 @@ type GeoIPData struct {
 	CacheHit bool
 }
 
+const ttl int = 129600 // 90 days in minutes  60*24*90
+var redisClient *redis.Client
+var redis_addr string
+
+func init() {
+	redis_addr = os.Getenv("REDIS_CONF")
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:     redis_addr,
+		Password: "",
+		DB:       0,
+	})
+}
+
 func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
 	var ctx = context.Background()
 
@@ -73,19 +84,6 @@ func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
 	return true
 }
 
-func (g *GeoIPData) checkLocalCache(localCache map[string]string, ip string) bool {
-	var s sync.Mutex
-	s.Lock()
-	jsonResult, found := localCache[ip]
-	s.Unlock()
-
-	if found {
-		json.Unmarshal([]byte(jsonResult), g)
-	}
-	g.Located = true
-	return found
-}
-
 func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
 	ttl := time.Duration(time.Minute * time.Duration(minutes))
 	ctx := context.Background()
@@ -100,75 +98,53 @@ func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
 
 }
 
-func (g *GeoIPData) add2LocalCache(localCache map[string]string) {
-	jsonResult, _ := json.Marshal(g)
-	var s sync.Mutex
-	s.Lock()
-	localCache[g.IP] = string(jsonResult)
-	s.Unlock()
-
-}
-
 func (g *GeoIPData) CheckOctets(o string) {
 	octets := strings.Split(g.IP, ".")
 	if len(octets) == 3 {
-		g.IP = g.IP + o
+		g.IP = octets[0] + "." + octets[1] + "." + octets[2] + "." + o
 	}
 }
 
-// GetGeoData initializes a search for the geoLocation of an IP.  We are passed a pointer to a redis Client or <nil>
-// a localCache (map structure) the IP we want and finally the TTL for how long to keep the IP in the Redis cache (in minutes)
-func GetGeoData(redisClient *redis.Client, localCache map[string]string, ttl int, ip string) GeoIPData {
+// GetGeoData initializes a search for the geoLocation of an IP.  Module entry point
+func GetGeoData(ip string) GeoIPData {
 	geo := GeoIPData{
 		IP:          ip,
 		ISP:         "-----",
 		CountryCode: "--",
 		City:        "-----",
 		CountryName: "-----",
+		CacheHit:    false,
 	}
 
-	geo.CheckOctets(".112")
+	geo.CheckOctets("112")
 
-	var found bool
-
-	// using Redis?  check there first
-	if redisClient != nil {
-		found = geo.checkRedisCache(redisClient, ip)
-		geo.CacheHit = found
-	} else {
-		// in localCache?
-		found = geo.checkLocalCache(localCache, ip)
-		geo.CacheHit = found
-	}
-
-	// found in one of our caches? skeedaddle
-	if found {
+	if redis_addr == "" {
+		rlog.Error("Warning: REDIS_CONF not set")
+		rlog.Printf("%+v\n", geo)
 		return geo
 	}
 
-	// if we get here, it's not found in a cache
+	// using Redis?  check there first
+	geo.CacheHit = geo.checkRedisCache(redisClient, ip)
+	if geo.CacheHit && geo.CountryCode != "--" {
+		rlog.Printf("%+v\n", geo)
+		return geo
+	}
+
+	// if we get here, it's not found in the cache, or hasn't been updated by the geo api
 	// is it a routable IP?  if not, no need to call the service.
 	// update GeoIPData, and add to cache
 	if geo.isLocal() || !geo.isRoutable() {
-		if redisClient != nil {
-			geo.add2RedisCache(redisClient, ttl)
-		} else {
-			geo.add2LocalCache(localCache)
-		}
-		return geo
-	}
-
-	//finally, call the location service
-	geo.obtainGeoDat()
-	if geo.CountryCode == "--" {
-		return geo
-	}
-
-	if redisClient != nil {
 		geo.add2RedisCache(redisClient, ttl)
-	} else {
-		geo.add2LocalCache(localCache)
+		rlog.Printf("%+v\n", geo)
+		return geo
 	}
+
+	//ip should be routable, so call the location service
+	geo.obtainGeoDat()
+
+	geo.add2RedisCache(redisClient, ttl)
+	rlog.Printf("%+v\n", geo)
 	return geo
 }
 
@@ -183,6 +159,10 @@ func (g *GeoIPData) isLocal() bool {
 		g.CountryName = "United States"
 		g.Latitude = 33.000000
 		g.Longitude = -97.000000
+		g.PostalCode = "75067"
+		g.ContinentCode = "NA"
+		g.ContinentName = "North America"
+		g.Region = "Texas"
 		rlog.Infof("%s is LaughingJ", g.IP)
 		return true
 	}
@@ -214,6 +194,8 @@ func (g *GeoIPData) isRoutable() bool {
 		"172.31.",
 	}
 
+	g.Routable = true
+
 	for _, v := range nonRoutable {
 		if strings.HasPrefix(g.IP, v) {
 			g.Routable = false
@@ -221,7 +203,6 @@ func (g *GeoIPData) isRoutable() bool {
 			g.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", g.IP)
 		}
 	}
-	g.Routable = true
 	return true
 }
 
@@ -251,7 +232,7 @@ func (g *GeoIPData) obtainGeoDat() string {
 	}
 	defer reader.Close()
 
-	byt, err := ioutil.ReadAll(reader)
+	byt, err := io.ReadAll(reader)
 	if err != nil {
 		g.Error = fmt.Sprintf("Reading our reader failed - %s", err)
 	}
