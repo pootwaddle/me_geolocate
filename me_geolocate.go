@@ -59,11 +59,17 @@ var redis_addr string
 
 func init() {
 	redis_addr = os.Getenv("REDIS_CONF")
+	var ctx = context.Background()
 	redisClient = redis.NewClient(&redis.Options{
 		Addr:     redis_addr,
 		Password: "",
 		DB:       0,
 	})
+	pong, err := redisClient.Ping(ctx).Result()
+	if err != nil {
+		//do something - probably set environment variable
+	}
+	rlog.Printf("%+v\n", pong)
 }
 
 func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
