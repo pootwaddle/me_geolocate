@@ -2,6 +2,7 @@
 // It looks first in the Redis cache
 // And finally, on a miss to cache, it makes a call to
 // https://json.geoiplookup.io/8.8.8.8 for the data and adds the data to the cache for next time
+// entrypoint: func GetGeoData(ip string) returns  GeoIPData struct
 package me_geolocate
 
 import (
