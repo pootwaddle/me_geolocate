@@ -20,6 +20,12 @@ import (
 	"github.com/romana/rlog"
 )
 
+const (
+	Red   = "\033[31m"
+	Green = "\033[32m"
+	Reset = "\033[0m"
+)
+
 // https://json.geoiplookup.io/8.8.8.8
 // seems up-to-date.   Limit 500 lookups per hour
 type GeoIPData struct {
@@ -134,7 +140,7 @@ func GetGeoData(ip string) GeoIPData {
 	// using Redis?  check there first
 	geo.CacheHit = geo.checkRedisCache(redisClient, ip)
 	if geo.CacheHit && geo.CountryCode != "--" {
-		rlog.Printf("%+v\n", geo)
+		rlog.Printf("%s%+v%s\n", Green, geo, Reset)
 		return geo
 	}
 
