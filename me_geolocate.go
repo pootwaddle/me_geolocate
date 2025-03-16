@@ -21,43 +21,29 @@ import (
 )
 
 const (
-	Red   = "\033[31m"
-	Green = "\033[32m"
-	Reset = "\033[0m"
+	Red           = "\033[31m"
+	Green         = "\033[32m"
+	Blue          = "\033[34m"
+	BrightMagenta = "\033[95m"
+	Reset         = "\033[0m"
 )
 
 // https://json.geoiplookup.io/8.8.8.8
 // seems up-to-date.   Limit 500 lookups per hour
 type GeoIPData struct {
-	IP             string  `json:"ip"`
-	ISP            string  `json:"isp"`
-	Org            string  `json:"org"`
-	Hostname       string  `json:"hostname"`
-	Latitude       float64 `json:"latitude"`
-	Longitude      float64 `json:"longitude"`
-	PostalCode     string  `json:"postal_code"`
-	City           string  `json:"city"`
-	CountryCode    string  `json:"country_code"`
-	CountryName    string  `json:"country_name"`
-	ContinentCode  string  `json:"continent_code"`
-	ContinentName  string  `json:"continent_name"`
-	Region         string  `json:"region"`
-	District       string  `json:"district"`
-	TimezoneName   string  `json:"timezone_name"`
-	ConnectionType string  `json:"connection_type"`
-	AsnNumber      int     `json:"asn_number"`
-	AsnOrg         string  `json:"asn_org"`
-	Asn            string  `json:"asn"`
-	CurrencyCode   string  `json:"currency_code"`
-	CurrencyName   string  `json:"currency_name"`
-	Success        bool    `json:"success"`
-	Error          string  `json:"error"`
-	Premium        bool    `json:"premium"`
-	//my fields
-	Located  bool `json:"located"`
-	Routable bool `json:"routable"`
-	Block    bool
-	CacheHit bool
+	IP          string `json:"ip"`
+	ISP         string `json:"isp"`
+	Org         string `json:"org"`
+	Hostname    string `json:"hostname"`
+	City        string `json:"city"`
+	CountryCode string `json:"country_code"`
+	CountryName string `json:"country_name"`
+	Success     bool   `json:"success"`
+	Error       string `json:"error"`
+	Located     bool   `json:"located"`
+	Routable    bool   `json:"routable"`
+	Block       bool
+	CacheHit    string
 }
 
 const ttl int = 129600 // 90 days in minutes  60*24*90
@@ -85,21 +71,25 @@ func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
 	jsonResult, err := redisClient.Get(ctx, ip).Result()
 	if err == redis.Nil {
 		g.Located = false
+		g.CacheHit = Red + "false" + Reset
 		return false
 	}
 	if err != nil {
 		g.Located = false
+		g.CacheHit = Red + "false" + Reset
 		return false
 	}
 
 	json.Unmarshal([]byte(jsonResult), g)
 	g.Located = true
+	g.CacheHit = Green + "true" + Reset
 	return true
 }
 
 func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
 	ttl := time.Duration(time.Minute * time.Duration(minutes))
 	ctx := context.Background()
+	g.CacheHit = Green + "true" + Reset
 	jsonResult, _ := json.Marshal(g)
 	// we can call set with a `Key` and a `Value`.
 	err := redisClient.Set(ctx, g.IP, jsonResult, ttl).Err()
@@ -108,7 +98,6 @@ func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
 	if err != nil {
 		rlog.Errorf("Error adding to Redis Cache - %s", err)
 	}
-
 }
 
 func (g *GeoIPData) CheckOctets(o string) {
@@ -118,41 +107,46 @@ func (g *GeoIPData) CheckOctets(o string) {
 	}
 }
 
-// GetGeoData initializes a search for the geoLocation of an IP.  Module entry point
+// GetGeoData Entrypoint - initializes a search for the geoLocation of an IP.
 func GetGeoData(ip string) GeoIPData {
 	geo := GeoIPData{
 		IP:          ip,
 		ISP:         "-----",
-		CountryCode: "--",
+		Hostname:    "-----",
 		City:        "-----",
+		CountryCode: "--",
 		CountryName: "-----",
-		CacheHit:    false,
+		Located:     false,
+		Routable:    false,
+		CacheHit:    BrightMagenta + "non-routable" + Reset,
 	}
 
-	geo.CheckOctets("112")
+	geo.CheckOctets("112") // if we have a 3 octet IP, add the last octet to make it routable
 
-	if redis_addr == "" {
-		rlog.Error("Warning: REDIS_CONF not set")
-		rlog.Printf("%+v\n", geo)
+	// if Local, no need to check anything else
+	if geo.isLocal() {
+		rlog.Printf("%+v", geo)
 		return geo
 	}
 
-	// using Redis?  check there first
-	geo.CacheHit = geo.checkRedisCache(redisClient, ip)
-	if geo.CacheHit && geo.CountryCode != "--" {
-		rlog.Printf("%s%+v%s\n", Green, geo, Reset)
+	// if Non-routable, no need to check anything else
+	if geo.isNonRoutable() {
+		rlog.Printf("%+v", geo)
 		return geo
 	}
 
-	// if we get here, it's not found in the cache, or hasn't been updated by the geo api
-	// is it a routable IP?  if not, no need to call the service.
-	// update GeoIPData, and add to cache
-	if geo.isLocal() || !geo.isRoutable() {
-		geo.add2RedisCache(redisClient, ttl)
-		rlog.Printf("%+v\n", geo)
-		return geo
+	// if we haven't set a redis address, we can't check the cache
+	if redis_addr != "" {
+		// using Redis - check there first
+		hit := geo.checkRedisCache(redisClient, ip)
+		if hit {
+			geo.CacheHit = Green + "true" + Reset
+			rlog.Printf("%+v", geo)
+			return geo
+		}
 	}
 
+	//if we get here, it's not found in the cache
 	//ip should be routable, so call the location service
 	geo.obtainGeoDat()
 
@@ -170,22 +164,14 @@ func (g *GeoIPData) isLocal() bool {
 		g.CountryCode = "US"
 		g.City = "Lewisville"
 		g.CountryName = "United States"
-		g.Latitude = 33.000000
-		g.Longitude = -97.000000
-		g.PostalCode = "75067"
-		g.ContinentCode = "NA"
-		g.ContinentName = "North America"
-		g.Region = "Texas"
+		g.CacheHit = Blue + "LaughingJ" + Reset
 		rlog.Infof("%s is LaughingJ", g.IP)
 		return true
 	}
 	return false
 }
 
-func (g *GeoIPData) isRoutable() bool {
-	// 192.168.0.0 to 192.168.255.255
-	// 10.0.0.0 to 10.255.255.255
-	// 172.16.0.0 to 172.31.255.255
+func (g *GeoIPData) isNonRoutable() bool {
 	nonRoutable := []string{
 		"192.168.",
 		"10.",
@@ -207,16 +193,19 @@ func (g *GeoIPData) isRoutable() bool {
 		"172.31.",
 	}
 
-	g.Routable = true
-
 	for _, v := range nonRoutable {
 		if strings.HasPrefix(g.IP, v) {
 			g.Routable = false
+			g.Located = false
 			g.Success = false
+			g.CacheHit = Red + "non-routable" + Reset
 			g.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", g.IP)
+			return true
 		}
 	}
-	return true
+
+	g.Routable = true
+	return false
 }
 
 func (g *GeoIPData) obtainGeoDat() string {
