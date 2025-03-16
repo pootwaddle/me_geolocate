@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/romana/rlog"
+	"github.com/pootwaddle/logger"
 )
 
 const (
@@ -33,7 +33,6 @@ const (
 type GeoIPData struct {
 	IP          string `json:"ip"`
 	ISP         string `json:"isp"`
-	Org         string `json:"org"`
 	Hostname    string `json:"hostname"`
 	City        string `json:"city"`
 	CountryCode string `json:"country_code"`
@@ -42,8 +41,16 @@ type GeoIPData struct {
 	Error       string `json:"error"`
 	Located     bool   `json:"located"`
 	Routable    bool   `json:"routable"`
-	Block       bool
-	CacheHit    string
+	Block       bool   `json:"block"`
+	CacheHit    bool   `json:"cache_hit"`
+}
+
+func (g *GeoIPData) ToJSON() string {
+	jsonData, err := json.Marshal(g)
+	if err != nil {
+		return fmt.Sprintf(`{"error": "failed to serialize GeoIPData: %s"}`, err)
+	}
+	return string(jsonData)
 }
 
 const ttl int = 129600 // 90 days in minutes  60*24*90
@@ -62,7 +69,7 @@ func init() {
 	if err != nil {
 		//do something - probably set environment variable
 	}
-	rlog.Printf("%+v\n", pong)
+	logger.Info(fmt.Sprintf("%s", pong))
 }
 
 func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
@@ -71,32 +78,33 @@ func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
 	jsonResult, err := redisClient.Get(ctx, ip).Result()
 	if err == redis.Nil {
 		g.Located = false
-		g.CacheHit = Red + "false" + Reset
+		g.CacheHit = false
 		return false
 	}
 	if err != nil {
 		g.Located = false
-		g.CacheHit = Red + "false" + Reset
+		g.CacheHit = false
 		return false
 	}
 
 	json.Unmarshal([]byte(jsonResult), g)
 	g.Located = true
-	g.CacheHit = Green + "true" + Reset
+	g.CacheHit = true
 	return true
 }
 
 func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
 	ttl := time.Duration(time.Minute * time.Duration(minutes))
 	ctx := context.Background()
-	g.CacheHit = Green + "true" + Reset
+	g.Located = true
+	g.CacheHit = true
 	jsonResult, _ := json.Marshal(g)
 	// we can call set with a `Key` and a `Value`.
 	err := redisClient.Set(ctx, g.IP, jsonResult, ttl).Err()
 	// if there has been an error setting the value
 	// handle the error
 	if err != nil {
-		rlog.Errorf("Error adding to Redis Cache - %s", err)
+		logger.Errorf("Error adding to Redis Cache - %s", err)
 	}
 }
 
@@ -118,40 +126,41 @@ func GetGeoData(ip string) GeoIPData {
 		CountryName: "-----",
 		Located:     false,
 		Routable:    false,
-		CacheHit:    BrightMagenta + "non-routable" + Reset,
+		CacheHit:    false,
 	}
 
 	geo.CheckOctets("112") // if we have a 3 octet IP, add the last octet to make it routable
 
 	// if Local, no need to check anything else
 	if geo.isLocal() {
-		rlog.Printf("%+v", geo)
+		logger.Infof("%s", geo.ToJSON())
 		return geo
 	}
 
 	// if Non-routable, no need to check anything else
 	if geo.isNonRoutable() {
-		rlog.Printf("%+v", geo)
+		logger.Infof("%s", geo.ToJSON())
 		return geo
 	}
 
 	// if we haven't set a redis address, we can't check the cache
 	if redis_addr != "" {
-		// using Redis - check there first
+		// using Redis scheck .ToJSON()there first
 		hit := geo.checkRedisCache(redisClient, ip)
 		if hit {
-			geo.CacheHit = Green + "true" + Reset
-			rlog.Printf("%+v", geo)
+			geo.Located = true
+			geo.CacheHit = true
+			logger.Infof("%s", geo.ToJSON())
 			return geo
 		}
 	}
 
 	//if we get here, it's not found in the cache
-	//ip should be routable, so call the location service
+	//ip should be routsle, so.ToJSON() call the location service
 	geo.obtainGeoDat()
 
 	geo.add2RedisCache(redisClient, ttl)
-	rlog.Printf("%+v\n", geo)
+	logger.Info(geo.ToJSON())
 	return geo
 }
 
@@ -161,11 +170,12 @@ func (g *GeoIPData) isLocal() bool {
 		g.Located = true
 		g.Routable = false
 		g.ISP = "LaughingJ"
+		g.Hostname = "LaughingJ"
 		g.CountryCode = "US"
 		g.City = "Lewisville"
 		g.CountryName = "United States"
-		g.CacheHit = Blue + "LaughingJ" + Reset
-		rlog.Infof("%s is LaughingJ", g.IP)
+		g.CacheHit = true
+		logger.Infof("%s is LaughingJ", g.IP)
 		return true
 	}
 	return false
@@ -198,7 +208,7 @@ func (g *GeoIPData) isNonRoutable() bool {
 			g.Routable = false
 			g.Located = false
 			g.Success = false
-			g.CacheHit = Red + "non-routable" + Reset
+			g.CacheHit = false
 			g.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", g.IP)
 			return true
 		}
@@ -241,7 +251,7 @@ func (g *GeoIPData) obtainGeoDat() string {
 	json.Unmarshal([]byte(byt), g)
 	g.Located = true
 
-	rlog.Debug(fmt.Sprintf("parsed Geo answer for IP:%s --> %v ", g.IP, g))
+	logger.Debug(fmt.Sprintf("parsed Geo answer for IP:%s --> %v ", g.IP, g))
 	jsonResult, _ := json.Marshal(g)
 	return string(jsonResult)
 }

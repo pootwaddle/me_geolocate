@@ -29,7 +29,7 @@ func TestIsLocal(t *testing.T) {
 	geo := GeoIPData{IP: "192.168.106.15"}
 	assert.True(t, geo.isLocal())
 	assert.Equal(t, "LaughingJ", geo.ISP)
-	assert.Equal(t, Blue+"LaughingJ"+Reset, geo.CacheHit)
+	assert.Equal(t, true, geo.CacheHit)
 }
 
 func TestCheckRedisCache(t *testing.T) {
@@ -40,7 +40,7 @@ func TestCheckRedisCache(t *testing.T) {
 
 	hit := geo.checkRedisCache(redisClient, mockIP)
 	assert.True(t, hit)
-	assert.Equal(t, Green+"true"+Reset, geo.CacheHit)
+	assert.Equal(t, true, geo.CacheHit)
 }
 
 func TestGetGeoData_CacheHit(t *testing.T) {
@@ -49,10 +49,10 @@ func TestGetGeoData_CacheHit(t *testing.T) {
 	redisClient.Set(ctx, mockIP, `{"ip": "8.8.8.8", "isp": "Google", "located": true}`, 0)
 
 	geo := GetGeoData(mockIP)
-	assert.Equal(t, Green+"true"+Reset, geo.CacheHit)
+	assert.Equal(t, true, geo.CacheHit)
 }
 
 func TestGetGeoData_NonRoutable(t *testing.T) {
 	geo := GetGeoData("192.168.1.1")
-	assert.Equal(t, Red+"non-routable"+Reset, geo.CacheHit)
+	assert.Equal(t, false, geo.CacheHit)
 }
