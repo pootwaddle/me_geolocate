@@ -89,7 +89,7 @@ func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
 func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
 	ttl := time.Duration(time.Minute * time.Duration(minutes))
 	ctx := context.Background()
-	g.CacheHit = Green + "true" + Reset
+	g.CacheHit = Red + "false" + Reset
 	jsonResult, _ := json.Marshal(g)
 	// we can call set with a `Key` and a `Value`.
 	err := redisClient.Set(ctx, g.IP, jsonResult, ttl).Err()
@@ -198,7 +198,7 @@ func (g *GeoIPData) isNonRoutable() bool {
 			g.Routable = false
 			g.Located = false
 			g.Success = false
-			g.CacheHit = Red + "non-routable" + Reset
+			g.CacheHit = BrightMagenta + "non-routable" + Reset
 			g.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", g.IP)
 			return true
 		}
