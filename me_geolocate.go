@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,26 @@ const (
 	BrightMagenta = "\033[95m"
 	Reset         = "\033[0m"
 )
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func LogGeo(geo *GeoIPData) {
+	// Print to console with color
+	fmt.Printf("{IP:%s, CC:%s, Hit:%s}\n", geo.IP, geo.CountryCode, geo.CacheHit)
+
+	// Make a copy of the struct to sanitize CacheHit for logging
+	clean := *geo
+	clean.CacheHit = ansiEscape.ReplaceAllString(geo.CacheHit, "")
+
+	// Marshal full sanitized struct to JSON
+	jsonLog, err := json.Marshal(clean)
+	if err != nil {
+		rlog.Errorf("Failed to marshal GeoIPData for log: %s", err)
+		return
+	}
+
+	rlog.Info(string(jsonLog))
+}
 
 // https://json.geoiplookup.io/8.8.8.8
 // seems up-to-date.   Limit 500 lookups per hour
@@ -62,7 +83,7 @@ func init() {
 	if err != nil {
 		//do something - probably set environment variable
 	}
-	rlog.Printf("%+v\n", pong)
+	rlog.Printf("%s", pong)
 }
 
 func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
@@ -125,13 +146,13 @@ func GetGeoData(ip string) GeoIPData {
 
 	// if Local, no need to check anything else
 	if geo.isLocal() {
-		rlog.Printf("%+v", geo)
+		LogGeo(&geo)
 		return geo
 	}
 
 	// if Non-routable, no need to check anything else
 	if geo.isNonRoutable() {
-		rlog.Printf("%+v", geo)
+		LogGeo(&geo)
 		return geo
 	}
 
@@ -139,9 +160,9 @@ func GetGeoData(ip string) GeoIPData {
 	if redis_addr != "" {
 		// using Redis - check there first
 		hit := geo.checkRedisCache(redisClient, ip)
-		if hit {
+		if hit && (geo.CountryCode != "--") {
 			geo.CacheHit = Green + "true" + Reset
-			rlog.Printf("%+v", geo)
+			LogGeo(&geo)
 			return geo
 		}
 	}
@@ -151,7 +172,7 @@ func GetGeoData(ip string) GeoIPData {
 	geo.obtainGeoDat()
 
 	geo.add2RedisCache(redisClient, ttl)
-	rlog.Printf("%+v\n", geo)
+	LogGeo(&geo)
 	return geo
 }
 
@@ -165,7 +186,7 @@ func (g *GeoIPData) isLocal() bool {
 		g.City = "Lewisville"
 		g.CountryName = "United States"
 		g.CacheHit = Blue + "LaughingJ" + Reset
-		rlog.Infof("%s is LaughingJ", g.IP)
+		LogGeo(g)
 		return true
 	}
 	return false

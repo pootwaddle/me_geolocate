@@ -2,10 +2,18 @@ package me_geolocate
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMain(m *testing.M) {
+	// Ensure Redis is enabled for the test
+	os.Setenv("REDIS_CONF", "localhost:6379")
+	os.Exit(m.Run())
+}
 
 func TestIsNonRoutable(t *testing.T) {
 	cases := []struct {
@@ -35,9 +43,24 @@ func TestIsLocal(t *testing.T) {
 func TestCheckRedisCache(t *testing.T) {
 	ctx := context.Background()
 	mockIP := "8.8.8.8"
-	geo := GeoIPData{IP: mockIP}
-	redisClient.Set(ctx, mockIP, `{"ip": "8.8.8.8", "isp": "Google", "located": true}`, 0)
 
+	mockData := GeoIPData{
+		IP:          mockIP,
+		ISP:         "Google",
+		Org:         "Google LLC",
+		Hostname:    "dns.google",
+		City:        "Mountain View",
+		CountryCode: "US",
+		CountryName: "United States",
+		Success:     true,
+		Located:     true,
+		Routable:    true,
+	}
+
+	jsonVal, _ := json.Marshal(mockData)
+	redisClient.Set(ctx, mockIP, jsonVal, 0)
+
+	geo := GeoIPData{IP: mockIP}
 	hit := geo.checkRedisCache(redisClient, mockIP)
 	assert.True(t, hit)
 	assert.Equal(t, Green+"true"+Reset, geo.CacheHit)
@@ -46,13 +69,30 @@ func TestCheckRedisCache(t *testing.T) {
 func TestGetGeoData_CacheHit(t *testing.T) {
 	ctx := context.Background()
 	mockIP := "8.8.8.8"
-	redisClient.Set(ctx, mockIP, `{"ip": "8.8.8.8", "isp": "Google", "located": true}`, 0)
+
+	mockData := GeoIPData{
+		IP:          mockIP,
+		ISP:         "Google",
+		Org:         "Google LLC",
+		Hostname:    "dns.google",
+		City:        "Mountain View",
+		CountryCode: "US",
+		CountryName: "United States",
+		Success:     true,
+		Located:     true,
+		Routable:    true,
+	}
+
+	jsonVal, _ := json.Marshal(mockData)
+	redisClient.Set(ctx, mockIP, jsonVal, 0)
 
 	geo := GetGeoData(mockIP)
 	assert.Equal(t, Green+"true"+Reset, geo.CacheHit)
+	assert.Equal(t, "US", geo.CountryCode)
+	assert.Equal(t, "Google", geo.ISP)
 }
 
 func TestGetGeoData_NonRoutable(t *testing.T) {
 	geo := GetGeoData("192.168.1.1")
-	assert.Equal(t, Red+"non-routable"+Reset, geo.CacheHit)
+	assert.Equal(t, BrightMagenta+"non-routable"+Reset, geo.CacheHit)
 }
