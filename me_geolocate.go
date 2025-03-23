@@ -31,16 +31,29 @@ const (
 
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+func ColorForIP(geo *GeoIPData) string {
+	switch {
+	case strings.HasPrefix(geo.IP, "192.168.106."):
+		return Blue // Local IPs
+	case !geo.Routable:
+		return BrightMagenta // Non-routable
+	case geo.CacheHit:
+		return Green // Cache hit
+	default:
+		return Red // API fallback
+	}
+}
+
 func LogGeo(geo *GeoIPData) {
-	// Print to console with color
-	fmt.Printf("{IP:%s, CC:%s, Hit:%s}\n", geo.IP, geo.CountryCode, geo.CacheHit)
+	// Choose color based on IP type
+	color := ColorForIP(geo)
+	coloredIP := fmt.Sprintf("%s%s%s", color, geo.IP, Reset)
 
-	// Make a copy of the struct to sanitize CacheHit for logging
-	clean := *geo
-	clean.CacheHit = ansiEscape.ReplaceAllString(geo.CacheHit, "")
+	// Console output
+	fmt.Printf("{IP:%s, CC:%s, Hit:%t}\n", coloredIP, geo.CountryCode, geo.CacheHit)
 
-	// Marshal full sanitized struct to JSON
-	jsonLog, err := json.Marshal(clean)
+	// Log clean struct
+	jsonLog, err := json.Marshal(geo)
 	if err != nil {
 		rlog.Errorf("Failed to marshal GeoIPData for log: %s", err)
 		return
@@ -63,8 +76,8 @@ type GeoIPData struct {
 	Error       string `json:"error"`
 	Located     bool   `json:"located"`
 	Routable    bool   `json:"routable"`
-	Block       bool
-	CacheHit    string
+	Block       bool   `json:"block"`
+	CacheHit    bool   `json:"cache_hit"` // used to indicate if we found the IP in the Redis cache
 }
 
 const ttl int = 129600 // 90 days in minutes  60*24*90
@@ -87,37 +100,43 @@ func init() {
 }
 
 func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
-	var ctx = context.Background()
+	ctx := context.Background()
 
 	jsonResult, err := redisClient.Get(ctx, ip).Result()
-	if err == redis.Nil {
+	if err == redis.Nil || err != nil {
 		g.Located = false
-		g.CacheHit = Red + "false" + Reset
-		return false
-	}
-	if err != nil {
-		g.Located = false
-		g.CacheHit = Red + "false" + Reset
+		g.CacheHit = false
 		return false
 	}
 
-	json.Unmarshal([]byte(jsonResult), g)
+	if err := json.Unmarshal([]byte(jsonResult), g); err != nil {
+		rlog.Errorf("Error unmarshaling Redis value for %s: %s", ip, err)
+		g.Located = false
+		g.CacheHit = false
+		return false
+	}
+
 	g.Located = true
-	g.CacheHit = Green + "true" + Reset
+	g.CacheHit = true
 	return true
 }
 
 func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
 	ttl := time.Duration(time.Minute * time.Duration(minutes))
 	ctx := context.Background()
-	g.CacheHit = Red + "false" + Reset
-	jsonResult, _ := json.Marshal(g)
-	// we can call set with a `Key` and a `Value`.
-	err := redisClient.Set(ctx, g.IP, jsonResult, ttl).Err()
-	// if there has been an error setting the value
-	// handle the error
+
+	// Mark as a cache miss until this is picked up again
+	g.CacheHit = false
+
+	jsonResult, err := json.Marshal(g)
 	if err != nil {
-		rlog.Errorf("Error adding to Redis Cache - %s", err)
+		rlog.Errorf("Error marshaling GeoIPData for Redis: %s", err)
+		return
+	}
+
+	err = redisClient.Set(ctx, g.IP, jsonResult, ttl).Err()
+	if err != nil {
+		rlog.Errorf("Error adding to Redis Cache for IP %s: %s", g.IP, err)
 	}
 }
 
@@ -139,7 +158,7 @@ func GetGeoData(ip string) GeoIPData {
 		CountryName: "-----",
 		Located:     false,
 		Routable:    false,
-		CacheHit:    BrightMagenta + "non-routable" + Reset,
+		CacheHit:    false,
 	}
 
 	geo.CheckOctets("112") // if we have a 3 octet IP, add the last octet to make it routable
@@ -161,7 +180,7 @@ func GetGeoData(ip string) GeoIPData {
 		// using Redis - check there first
 		hit := geo.checkRedisCache(redisClient, ip)
 		if hit && (geo.CountryCode != "--") {
-			geo.CacheHit = Green + "true" + Reset
+			geo.CacheHit = true
 			LogGeo(&geo)
 			return geo
 		}
@@ -185,7 +204,7 @@ func (g *GeoIPData) isLocal() bool {
 		g.CountryCode = "US"
 		g.City = "Lewisville"
 		g.CountryName = "United States"
-		g.CacheHit = Blue + "LaughingJ" + Reset
+		g.CacheHit = false
 		LogGeo(g)
 		return true
 	}
@@ -219,7 +238,7 @@ func (g *GeoIPData) isNonRoutable() bool {
 			g.Routable = false
 			g.Located = false
 			g.Success = false
-			g.CacheHit = BrightMagenta + "non-routable" + Reset
+			g.CacheHit = false
 			g.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", g.IP)
 			return true
 		}
