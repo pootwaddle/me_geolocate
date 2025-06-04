@@ -1,56 +1,27 @@
-package me_geolocate
+package megeolocate
 
 import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/pootwaddle/logger"
 )
 
-const (
-	Red           = "\033[31m"
-	Green         = "\033[32m"
-	Blue          = "\033[34m"
-	BrightMagenta = "\033[95m"
-	Reset         = "\033[0m"
-)
+// ======= Types =======
 
-var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-func ColorForIP(geo *GeoIPData) string {
-	switch {
-	case strings.HasPrefix(geo.IP, "192.168.106."):
-		return Blue
-	case !geo.Routable:
-		return BrightMagenta
-	case geo.CacheHit:
-		return Green
-	default:
-		return Red
-	}
-}
-
-func LogGeo(geo *GeoIPData) {
-	color := ColorForIP(geo)
-	coloredIP := fmt.Sprintf("%s%s%s", color, geo.IP, Reset)
-	fmt.Printf("{IP:%s, CC:%s, Hit:%t}\n", coloredIP, geo.CountryCode, geo.CacheHit)
-
-	jsonLog, err := json.Marshal(geo)
-	if err != nil {
-		logger.Errorf("Failed to marshal GeoIPData for log: %s", err)
-		return
-	}
-
-	logger.Info(string(jsonLog))
+type GeoLocator struct {
+	redis  *redis.Client
+	ttl    time.Duration
+	logger *slog.Logger
 }
 
 type GeoIPData struct {
@@ -69,75 +40,50 @@ type GeoIPData struct {
 	CacheHit    bool   `json:"cache_hit"`
 }
 
-const ttl int = 129600
+// ======= Constants =======
 
-var redisClient *redis.Client
-var redis_addr string
+var (
+	ansiEscape     = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	nonRoutableNet = []string{
+		"192.168.", "10.",
+		"172.16.", "172.17.", "172.18.", "172.19.",
+		"172.20.", "172.21.", "172.22.", "172.23.",
+		"172.24.", "172.25.", "172.26.", "172.27.",
+		"172.28.", "172.29.", "172.30.", "172.31.",
+	}
+	colorBlue          = "\033[34m"
+	colorBrightMagenta = "\033[95m"
+	colorGreen         = "\033[32m"
+	colorRed           = "\033[31m"
+	colorReset         = "\033[0m"
+)
 
-func init() {
-	redis_addr = os.Getenv("REDIS_CONF")
-	var ctx = context.Background()
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     redis_addr,
-		Password: "",
-		DB:       0,
+// ======= Constructor =======
+
+func NewGeoLocator(redisAddr string, ttlMinutes int, logger *slog.Logger) (*GeoLocator, error) {
+	if redisAddr == "" {
+		return nil, errors.New("redisAddr cannot be empty")
+	}
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+		DB:   0,
 	})
-	pong, err := redisClient.Ping(ctx).Result()
-	if err == nil {
-		logger.Infof("Redis connection successful: %s", pong)
-	} else {
-		logger.Errorf("Redis ping failed: %v", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("redis ping failed: %w", err)
 	}
+	return &GeoLocator{
+		redis:  rdb,
+		ttl:    time.Duration(ttlMinutes) * time.Minute,
+		logger: logger,
+	}, nil
 }
 
-func (g *GeoIPData) checkRedisCache(redisClient *redis.Client, ip string) bool {
-	ctx := context.Background()
+// ======= Public API =======
 
-	jsonResult, err := redisClient.Get(ctx, ip).Result()
-	if err == redis.Nil || err != nil {
-		g.Located = false
-		g.CacheHit = false
-		return false
-	}
-
-	if err := json.Unmarshal([]byte(jsonResult), g); err != nil {
-		logger.Errorf("Error unmarshaling Redis value for %s: %s", ip, err)
-		g.Located = false
-		g.CacheHit = false
-		return false
-	}
-
-	g.Located = true
-	g.CacheHit = true
-	return true
-}
-
-func (g *GeoIPData) add2RedisCache(redisClient *redis.Client, minutes int) {
-	ttl := time.Duration(time.Minute * time.Duration(minutes))
-	ctx := context.Background()
-
-	g.CacheHit = false
-
-	jsonResult, err := json.Marshal(g)
-	if err != nil {
-		logger.Errorf("Error marshaling GeoIPData for Redis: %s", err)
-		return
-	}
-
-	err = redisClient.Set(ctx, g.IP, jsonResult, ttl).Err()
-	if err != nil {
-		logger.Errorf("Error adding to Redis Cache for IP %s: %s", g.IP, err)
-	}
-}
-
-func (g *GeoIPData) CheckOctets(o string) {
-	octets := strings.Split(g.IP, ".")
-	if len(octets) == 3 {
-		g.IP = octets[0] + "." + octets[1] + "." + octets[2] + "." + o
-	}
-}
-
-func GetGeoData(ip string) GeoIPData {
+// GetGeoData retrieves geo data for an IP, using Redis cache, with context.
+func (g *GeoLocator) GetGeoData(ctx context.Context, ip string) (GeoIPData, error) {
 	geo := GeoIPData{
 		IP:          ip,
 		ISP:         "-----",
@@ -145,93 +91,124 @@ func GetGeoData(ip string) GeoIPData {
 		City:        "-----",
 		CountryCode: "--",
 		CountryName: "-----",
-		Located:     false,
-		Routable:    false,
-		CacheHit:    false,
 	}
 
+	// Check for local IP
 	geo.CheckOctets("112")
-
-	if geo.isLocal() {
-		LogGeo(&geo)
-		return geo
+	if geo.isLocal(g.logger) {
+		g.logGeo(&geo)
+		return geo, nil
 	}
-
 	if geo.isNonRoutable() {
-		LogGeo(&geo)
-		return geo
+		g.logGeo(&geo)
+		return geo, nil
 	}
 
-	if redis_addr != "" {
-		hit := geo.checkRedisCache(redisClient, ip)
-		if hit && (geo.CountryCode != "--") {
-			geo.CacheHit = true
-			LogGeo(&geo)
-			return geo
-		}
+	// Try cache
+	if g.checkRedisCache(ctx, &geo) && geo.CountryCode != "--" {
+		geo.CacheHit = true
+		g.logGeo(&geo)
+		return geo, nil
 	}
 
-	geo.obtainGeoDat()
-	geo.add2RedisCache(redisClient, ttl)
-	LogGeo(&geo)
-	return geo
+	// Remote fetch
+	if err := geo.obtainGeoDat(ctx, g.logger); err != nil {
+		geo.Error = err.Error()
+	}
+	g.add2RedisCache(ctx, &geo)
+	g.logGeo(&geo)
+	return geo, nil
 }
 
-func (g *GeoIPData) isLocal() bool {
-	if strings.HasPrefix(g.IP, "192.168.106.") {
-		g.Located = true
-		g.Routable = false
-		g.ISP = "LaughingJ"
-		g.CountryCode = "US"
-		g.City = "Lewisville"
-		g.CountryName = "United States"
-		g.CacheHit = false
-		LogGeo(g)
+// ======= Redis Cache Methods =======
+
+func (g *GeoLocator) checkRedisCache(ctx context.Context, geo *GeoIPData) bool {
+	val, err := g.redis.Get(ctx, geo.IP).Result()
+	if err == redis.Nil || err != nil {
+		geo.Located = false
+		geo.CacheHit = false
+		return false
+	}
+	if err := json.Unmarshal([]byte(val), geo); err != nil {
+		g.logger.Error("unmarshal Redis", "ip", geo.IP, "err", err)
+		geo.Located = false
+		geo.CacheHit = false
+		return false
+	}
+	geo.Located = true
+	geo.CacheHit = true
+	return true
+}
+
+func (g *GeoLocator) add2RedisCache(ctx context.Context, geo *GeoIPData) {
+	geo.CacheHit = false // just being explicit
+	b, err := json.Marshal(geo)
+	if err != nil {
+		g.logger.Error("marshal for Redis", "ip", geo.IP, "err", err)
+		return
+	}
+	if err := g.redis.Set(ctx, geo.IP, b, g.ttl).Err(); err != nil {
+		g.logger.Error("redis Set failed", "ip", geo.IP, "err", err)
+	}
+}
+
+// ======= Internal/Helper Methods =======
+
+func (geo *GeoIPData) CheckOctets(o string) {
+	octets := strings.Split(geo.IP, ".")
+	if len(octets) == 3 {
+		geo.IP = octets[0] + "." + octets[1] + "." + octets[2] + "." + o
+	}
+}
+
+func (geo *GeoIPData) isLocal(logger *slog.Logger) bool {
+	if strings.HasPrefix(geo.IP, "192.168.106.") {
+		geo.Located = true
+		geo.Routable = false
+		geo.ISP = "LaughingJ"
+		geo.CountryCode = "US"
+		geo.City = "Lewisville"
+		geo.CountryName = "United States"
+		geo.CacheHit = false
+		geo.Success = true
+		logger.Info("detected local IP", "ip", geo.IP)
 		return true
 	}
 	return false
 }
 
-func (g *GeoIPData) isNonRoutable() bool {
-	nonRoutable := []string{
-		"192.168.", "10.",
-		"172.16.", "172.17.", "172.18.", "172.19.",
-		"172.20.", "172.21.", "172.22.", "172.23.",
-		"172.24.", "172.25.", "172.26.", "172.27.",
-		"172.28.", "172.29.", "172.30.", "172.31.",
-	}
-
-	for _, v := range nonRoutable {
-		if strings.HasPrefix(g.IP, v) {
-			g.Routable = false
-			g.Located = false
-			g.Success = false
-			g.CacheHit = false
-			g.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", g.IP)
+func (geo *GeoIPData) isNonRoutable() bool {
+	for _, v := range nonRoutableNet {
+		if strings.HasPrefix(geo.IP, v) {
+			geo.Routable = false
+			geo.Located = false
+			geo.Success = false
+			geo.CacheHit = false
+			geo.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", geo.IP)
 			return true
 		}
 	}
-
-	g.Routable = true
+	geo.Routable = true
 	return false
 }
 
-func (g *GeoIPData) obtainGeoDat() string {
-	url := fmt.Sprintf("https://json.geoiplookup.io/%s", g.IP)
+func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) error {
+	url := fmt.Sprintf("https://json.geoiplookup.io/%s", geo.IP)
 
-	req, _ := http.NewRequest("GET", url, nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Accept-Encoding", "gzip")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		logger.Errorf("HTTP request failed for %s: %v", g.IP, err)
-		return ""
+		logger.Error("HTTP request failed", "ip", geo.IP, "err", err)
+		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.Status != "200 OK" {
-		g.Error = fmt.Sprintf("GetGeoData received invalid response for IP: %s - %s", g.IP, resp.Status)
+	if resp.StatusCode != http.StatusOK {
+		geo.Error = fmt.Sprintf("Invalid response %d from geoip service", resp.StatusCode)
+		return errors.New(geo.Error)
 	}
 
 	var reader io.ReadCloser
@@ -243,15 +220,45 @@ func (g *GeoIPData) obtainGeoDat() string {
 	}
 	defer reader.Close()
 
-	byt, err := io.ReadAll(reader)
+	b, err := io.ReadAll(reader)
 	if err != nil {
-		g.Error = fmt.Sprintf("Reading response body failed - %s", err)
+		geo.Error = fmt.Sprintf("Reading response body failed - %s", err)
+		return err
 	}
 
-	json.Unmarshal(byt, g)
-	g.Located = true
+	if err := json.Unmarshal(b, geo); err != nil {
+		logger.Error("Unmarshal failed", "ip", geo.IP, "err", err)
+		return err
+	}
+	geo.Located = true
+	logger.Debug("parsed geo answer", "ip", geo.IP, "geo", geo)
+	return nil
+}
 
-	logger.Debugf("parsed Geo answer for IP:%s --> %+v", g.IP, g)
-	jsonResult, _ := json.Marshal(g)
-	return string(jsonResult)
+// ======= Logging Helpers =======
+
+func (g *GeoLocator) logGeo(geo *GeoIPData) {
+	color := colorForIP(geo)
+	coloredIP := fmt.Sprintf("%s%s%s", color, geo.IP, colorReset)
+	g.logger.Info("GeoIP result",
+		"ip", geo.IP,
+		"colored_ip", coloredIP,
+		"country_code", geo.CountryCode,
+		"cache_hit", geo.CacheHit,
+		"city", geo.City,
+		"isp", geo.ISP,
+	)
+}
+
+func colorForIP(geo *GeoIPData) string {
+	switch {
+	case strings.HasPrefix(geo.IP, "192.168.106."):
+		return colorBlue
+	case !geo.Routable:
+		return colorBrightMagenta
+	case geo.CacheHit:
+		return colorGreen
+	default:
+		return colorRed
+	}
 }
