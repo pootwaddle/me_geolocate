@@ -59,7 +59,7 @@ func NewGeoLocator(logger *slog.Logger) (*GeoLocator, error) {
 	if redisAddr == "" {
 		redisAddr = "127.0.0.1:6379"
 	}
-	logger.Info("GeoLocator initializing", "redis_addr", redisAddr)
+	logger.Info("👋 GeoLocator initializing", "redis_addr", redisAddr)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
@@ -163,7 +163,7 @@ func (geo *GeoIPData) IsLocal(logger *slog.Logger) bool {
 		geo.CountryName = "United States"
 		geo.IPClass = "local"
 		geo.Success = true
-		logger.Info("detected local IP", "ip", geo.IP)
+		logger.Info("🔵 detected local IP", "ip", geo.IP)
 		return true
 	}
 	return false
@@ -231,7 +231,7 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 
 func (g *GeoLocator) logGeo(geo *GeoIPData) {
 	geo.PrintColorStatus() // Always print, always color
-	g.logger.Info("GeoIP result",
+	g.logger.Info("🌐 GeoIP result",
 		slog.String("ip", geo.IP),
 		slog.String("ip_class", geo.IPClass),
 		slog.String("country_code", geo.CountryCode),
