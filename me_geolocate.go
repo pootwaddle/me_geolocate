@@ -25,18 +25,13 @@ type GeoLocator struct {
 }
 
 type GeoIPData struct {
-	IP          string `json:"ip"` // IP address
+	IP          string `json:"ip"`
 	ISP         string `json:"isp"`
-	Org         string `json:"org"`
-	Hostname    string `json:"hostname"`
 	City        string `json:"city"`
 	CountryCode string `json:"country_code"`
 	CountryName string `json:"country_name"`
 	Success     bool   `json:"success"`
 	Error       string `json:"error"`
-	Located     bool   `json:"located"`
-	Routable    bool   `json:"routable"`
-	Block       bool   `json:"block"`
 	IPClass     string `json:"ip_class"`
 }
 
@@ -90,7 +85,6 @@ func (g *GeoLocator) GetGeoData(ctx context.Context, ip string) (GeoIPData, erro
 	geo := GeoIPData{
 		IP:          ip,
 		ISP:         "-----",
-		Hostname:    "-----",
 		City:        "-----",
 		CountryCode: "--",
 		CountryName: "-----",
@@ -128,17 +122,14 @@ func (g *GeoLocator) GetGeoData(ctx context.Context, ip string) (GeoIPData, erro
 func (g *GeoLocator) checkRedisCache(ctx context.Context, geo *GeoIPData) bool {
 	val, err := g.redis.Get(ctx, geo.IP).Result()
 	if err == redis.Nil || err != nil {
-		geo.Located = false
 		geo.IPClass = "cache_miss"
 		return false
 	}
 	if err := json.Unmarshal([]byte(val), geo); err != nil {
 		g.logger.Error("unmarshal Redis", "ip", geo.IP, "err", err)
-		geo.Located = false
 		geo.IPClass = "cache_miss"
 		return false
 	}
-	geo.Located = true
 	geo.IPClass = "cache_hit"
 	return true
 }
@@ -166,8 +157,6 @@ func (geo *GeoIPData) checkOctets(o string) {
 
 func (geo *GeoIPData) IsLocal(logger *slog.Logger) bool {
 	if strings.HasPrefix(geo.IP, "192.168.106.") {
-		geo.Located = true
-		geo.Routable = false
 		geo.ISP = "LaughingJ"
 		geo.CountryCode = "US"
 		geo.City = "Lewisville"
@@ -187,15 +176,12 @@ func (geo *GeoIPData) IsNonRoutable() bool {
 	}
 	for _, v := range nonRoutableNet {
 		if strings.HasPrefix(geo.IP, v) {
-			geo.Routable = false
-			geo.Located = false
 			geo.Success = false
 			geo.IPClass = "non-routable"
 			geo.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", geo.IP)
 			return true
 		}
 	}
-	geo.Routable = true
 	return false
 }
 
@@ -237,7 +223,6 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 		logger.Error("Unmarshal failed", "ip", geo.IP, "err", err)
 		return err
 	}
-	geo.Located = true
 	logger.Debug("parsed geo answer", "ip", geo.IP, "geo", geo)
 	return nil
 }
@@ -251,6 +236,7 @@ func (g *GeoLocator) logGeo(geo *GeoIPData) {
 		slog.String("ip_class", geo.IPClass),
 		slog.String("country_code", geo.CountryCode),
 		slog.String("city", geo.City),
+		slog.String("country_name", geo.CountryName),
 		slog.String("isp", geo.ISP),
 	)
 }
