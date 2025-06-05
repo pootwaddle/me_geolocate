@@ -13,30 +13,12 @@ import (
 
 // Helper: Create a test logger and locator
 func newTestGeoLocator(t *testing.T) *GeoLocator {
-	redisAddr := "localhost:6379"
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	loc, err := NewGeoLocator(redisAddr, 1, logger) // 1 minute TTL for tests
+	loc, err := NewGeoLocator(logger)
 	if err != nil {
 		t.Fatalf("failed to init GeoLocator: %v", err)
 	}
 	return loc
-}
-
-func TestIsNonRoutable(t *testing.T) {
-	cases := []struct {
-		ip       string
-		expected bool
-	}{
-		{"192.168.1.1", true},
-		{"10.0.0.1", true},
-		{"172.16.5.5", true},
-		{"8.8.8.8", false},
-		{"1.1.1.1", false},
-	}
-	for _, tc := range cases {
-		geo := GeoIPData{IP: tc.ip}
-		assert.Equal(t, tc.expected, geo.isNonRoutable(), "Failed for IP: %s", tc.ip)
-	}
 }
 
 func TestIsLocal(t *testing.T) {
@@ -44,9 +26,33 @@ func TestIsLocal(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	assert.True(t, geo.isLocal(logger))
 	assert.Equal(t, "LaughingJ", geo.ISP)
-	assert.Equal(t, false, geo.CacheHit)
 	assert.Equal(t, "US", geo.CountryCode)
 	assert.Equal(t, "Lewisville", geo.City)
+	assert.Equal(t, "local", geo.IPClass)
+}
+
+func TestIsNonRoutable(t *testing.T) {
+	cases := []struct {
+		ip       string
+		expected bool
+		ipClass  string
+	}{
+		{"192.168.1.1", true, "non-routable"},
+		{"10.0.0.1", true, "non-routable"},
+		{"172.16.5.5", true, "non-routable"},
+		{"8.8.8.8", false, ""},
+		{"1.1.1.1", false, ""},
+		{"192.168.106.15", false, "local"},
+	}
+	for _, tc := range cases {
+		geo := GeoIPData{IP: tc.ip}
+		geo.isLocal(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		res := geo.isNonRoutable()
+		assert.Equal(t, tc.expected, res, "Failed for IP: %s", tc.ip)
+		if tc.ipClass != "" {
+			assert.Equal(t, tc.ipClass, geo.IPClass, "Wrong ip_class for IP: %s", tc.ip)
+		}
+	}
 }
 
 func TestCheckRedisCache(t *testing.T) {
@@ -65,6 +71,7 @@ func TestCheckRedisCache(t *testing.T) {
 		Success:     true,
 		Located:     true,
 		Routable:    true,
+		IPClass:     "cache_hit",
 	}
 
 	jsonVal, _ := json.Marshal(mockData)
@@ -75,7 +82,7 @@ func TestCheckRedisCache(t *testing.T) {
 	geo := GeoIPData{IP: mockIP}
 	hit := loc.checkRedisCache(ctx, &geo)
 	assert.True(t, hit)
-	assert.True(t, geo.CacheHit)
+	assert.Equal(t, "cache_hit", geo.IPClass)
 	assert.Equal(t, "US", geo.CountryCode)
 	assert.Equal(t, "Google", geo.ISP)
 }
@@ -96,6 +103,7 @@ func TestGetGeoData_CacheHit(t *testing.T) {
 		Success:     true,
 		Located:     true,
 		Routable:    true,
+		IPClass:     "cache_hit",
 	}
 
 	jsonVal, _ := json.Marshal(mockData)
@@ -105,7 +113,7 @@ func TestGetGeoData_CacheHit(t *testing.T) {
 
 	geo, err := loc.GetGeoData(ctx, mockIP)
 	assert.NoError(t, err)
-	assert.True(t, geo.CacheHit)
+	assert.Equal(t, "cache_hit", geo.IPClass)
 	assert.Equal(t, "US", geo.CountryCode)
 	assert.Equal(t, "Google", geo.ISP)
 }
@@ -115,7 +123,17 @@ func TestGetGeoData_NonRoutable(t *testing.T) {
 	ctx := context.Background()
 	geo, err := loc.GetGeoData(ctx, "192.168.1.1")
 	assert.NoError(t, err)
-	assert.False(t, geo.CacheHit)
+	assert.Equal(t, "non-routable", geo.IPClass)
 	assert.False(t, geo.Routable)
 	assert.False(t, geo.Located)
+}
+
+func TestGetGeoData_Local(t *testing.T) {
+	loc := newTestGeoLocator(t)
+	ctx := context.Background()
+	geo, err := loc.GetGeoData(ctx, "192.168.106.22")
+	assert.NoError(t, err)
+	assert.Equal(t, "local", geo.IPClass)
+	assert.False(t, geo.Routable)
+	assert.Equal(t, "Lewisville", geo.City)
 }

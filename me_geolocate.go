@@ -38,7 +38,7 @@ type GeoIPData struct {
 	Located     bool   `json:"located"`
 	Routable    bool   `json:"routable"`
 	Block       bool   `json:"block"`
-	CacheHit    bool   `json:"cache_hit"`
+	IPClass     string `json:"ip_class"`
 }
 
 // ======= Constants =======
@@ -111,7 +111,7 @@ func (g *GeoLocator) GetGeoData(ctx context.Context, ip string) (GeoIPData, erro
 
 	// Try cache
 	if g.checkRedisCache(ctx, &geo) && geo.CountryCode != "--" {
-		geo.CacheHit = true
+		geo.IPClass = "cache_hit"
 		g.logGeo(&geo)
 		return geo, nil
 	}
@@ -131,22 +131,22 @@ func (g *GeoLocator) checkRedisCache(ctx context.Context, geo *GeoIPData) bool {
 	val, err := g.redis.Get(ctx, geo.IP).Result()
 	if err == redis.Nil || err != nil {
 		geo.Located = false
-		geo.CacheHit = false
+		geo.IPClass = "cache_miss"
 		return false
 	}
 	if err := json.Unmarshal([]byte(val), geo); err != nil {
 		g.logger.Error("unmarshal Redis", "ip", geo.IP, "err", err)
 		geo.Located = false
-		geo.CacheHit = false
+		geo.IPClass = "cache_miss"
 		return false
 	}
 	geo.Located = true
-	geo.CacheHit = true
+	geo.IPClass = "cache_hit"
 	return true
 }
 
 func (g *GeoLocator) add2RedisCache(ctx context.Context, geo *GeoIPData) {
-	geo.CacheHit = false // just being explicit
+	geo.IPClass = "cache_miss" // just being explicit
 	b, err := json.Marshal(geo)
 	if err != nil {
 		g.logger.Error("marshal for Redis", "ip", geo.IP, "err", err)
@@ -174,7 +174,7 @@ func (geo *GeoIPData) isLocal(logger *slog.Logger) bool {
 		geo.CountryCode = "US"
 		geo.City = "Lewisville"
 		geo.CountryName = "United States"
-		geo.CacheHit = false
+		geo.IPClass = "local"
 		geo.Success = true
 		logger.Info("detected local IP", "ip", geo.IP)
 		return true
@@ -183,12 +183,16 @@ func (geo *GeoIPData) isLocal(logger *slog.Logger) bool {
 }
 
 func (geo *GeoIPData) isNonRoutable() bool {
+	// Only mark as "non-routable" if not "local"
+	if geo.IPClass == "local" {
+		return false
+	}
 	for _, v := range nonRoutableNet {
 		if strings.HasPrefix(geo.IP, v) {
 			geo.Routable = false
 			geo.Located = false
 			geo.Success = false
-			geo.CacheHit = false
+			geo.IPClass = "non-routable"
 			geo.Error = fmt.Sprintf("Invalid public IPv4 or IPv6 address %s", geo.IP)
 			return true
 		}
@@ -243,26 +247,25 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 // ======= Logging Helpers =======
 
 func (g *GeoLocator) logGeo(geo *GeoIPData) {
-	color := colorForIP(geo)
-	coloredIP := fmt.Sprintf("%s%s%s", color, geo.IP, colorReset)
 	g.logger.Info("GeoIP result",
-		"ip", geo.IP,
-		"colored_ip", coloredIP,
-		"country_code", geo.CountryCode,
-		"cache_hit", geo.CacheHit,
-		"city", geo.City,
-		"isp", geo.ISP,
+		slog.String("ip", geo.IP),
+		slog.String("ip_class", geo.IPClass),
+		slog.String("country_code", geo.CountryCode),
+		slog.String("city", geo.City),
+		slog.String("isp", geo.ISP),
 	)
 }
 
 func colorForIP(geo *GeoIPData) string {
-	switch {
-	case strings.HasPrefix(geo.IP, "192.168.106."):
-		return colorBlue
-	case !geo.Routable:
-		return colorBrightMagenta
-	case geo.CacheHit:
+	switch geo.IPClass {
+	case "cache_hit":
 		return colorGreen
+	case "cache_miss":
+		return colorRed
+	case "non-routable":
+		return colorBrightMagenta
+	case "local":
+		return colorBlue
 	default:
 		return colorRed
 	}
