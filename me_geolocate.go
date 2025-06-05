@@ -269,6 +269,6 @@ func (geo *GeoIPData) PrintColorStatus() {
 	default:
 		color = colorReset
 	}
-	fmt.Printf("%sGeoIP [%s]: %s | %s, %s | ISP: %s%s\n",
-		color, geo.IPClass, geo.IP, geo.City, geo.CountryCode, geo.ISP, colorReset)
+	fmt.Printf("GeoIP [%s%s%s]: %s, %s | ISP: %s\n",
+		color, geo.IP, colorReset, geo.CountryCode, geo.City, geo.ISP)
 }
