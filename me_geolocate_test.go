@@ -24,7 +24,7 @@ func newTestGeoLocator(t *testing.T) *GeoLocator {
 func TestIsLocal(t *testing.T) {
 	geo := GeoIPData{IP: "192.168.106.15"}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	assert.True(t, geo.isLocal(logger))
+	assert.True(t, geo.IsLocal(logger))
 	assert.Equal(t, "LaughingJ", geo.ISP)
 	assert.Equal(t, "US", geo.CountryCode)
 	assert.Equal(t, "Lewisville", geo.City)
@@ -46,8 +46,8 @@ func TestIsNonRoutable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		geo := GeoIPData{IP: tc.ip}
-		geo.isLocal(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		res := geo.isNonRoutable()
+		geo.IsLocal(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		res := geo.IsNonRoutable()
 		assert.Equal(t, tc.expected, res, "Failed for IP: %s", tc.ip)
 		if tc.ipClass != "" {
 			assert.Equal(t, tc.ipClass, geo.IPClass, "Wrong ip_class for IP: %s", tc.ip)

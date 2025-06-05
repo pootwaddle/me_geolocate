@@ -10,12 +10,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"golang.org/x/term"
 )
 
 // ======= Types =======
@@ -45,7 +43,6 @@ type GeoIPData struct {
 // ======= Constants =======
 
 var (
-	ansiEscape     = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	nonRoutableNet = []string{
 		"192.168.", "10.",
 		"172.16.", "172.17.", "172.18.", "172.19.",
@@ -100,12 +97,12 @@ func (g *GeoLocator) GetGeoData(ctx context.Context, ip string) (GeoIPData, erro
 	}
 
 	// Check for local IP
-	geo.CheckOctets("112")
-	if geo.isLocal(g.logger) {
+	geo.checkOctets("112")
+	if geo.IsLocal(g.logger) {
 		g.logGeo(&geo)
 		return geo, nil
 	}
-	if geo.isNonRoutable() {
+	if geo.IsNonRoutable() {
 		g.logGeo(&geo)
 		return geo, nil
 	}
@@ -160,14 +157,14 @@ func (g *GeoLocator) add2RedisCache(ctx context.Context, geo *GeoIPData) {
 
 // ======= Internal/Helper Methods =======
 
-func (geo *GeoIPData) CheckOctets(o string) {
+func (geo *GeoIPData) checkOctets(o string) {
 	octets := strings.Split(geo.IP, ".")
 	if len(octets) == 3 {
 		geo.IP = octets[0] + "." + octets[1] + "." + octets[2] + "." + o
 	}
 }
 
-func (geo *GeoIPData) isLocal(logger *slog.Logger) bool {
+func (geo *GeoIPData) IsLocal(logger *slog.Logger) bool {
 	if strings.HasPrefix(geo.IP, "192.168.106.") {
 		geo.Located = true
 		geo.Routable = false
@@ -183,7 +180,7 @@ func (geo *GeoIPData) isLocal(logger *slog.Logger) bool {
 	return false
 }
 
-func (geo *GeoIPData) isNonRoutable() bool {
+func (geo *GeoIPData) IsNonRoutable() bool {
 	// Only mark as "non-routable" if not "local"
 	if geo.IPClass == "local" {
 		return false
@@ -248,15 +245,8 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 // ======= Logging Helpers =======
 
 func (g *GeoLocator) logGeo(geo *GeoIPData) {
-	status := geo.IPClass
-	if isTerminal(int(os.Stdout.Fd())) {
-		status = colorizeIPClass(geo.IPClass)
-	}
-	msg := fmt.Sprintf(
-		"GeoIP [%s]: %s | %s, %s | ISP: %s",
-		status, geo.IP, geo.City, geo.CountryCode, geo.ISP,
-	)
-	g.logger.Info(msg,
+	geo.PrintColorStatus() // Always print, always color
+	g.logger.Info("GeoIP result",
 		slog.String("ip", geo.IP),
 		slog.String("ip_class", geo.IPClass),
 		slog.String("country_code", geo.CountryCode),
@@ -265,22 +255,20 @@ func (g *GeoLocator) logGeo(geo *GeoIPData) {
 	)
 }
 
-func isTerminal(fd int) bool {
-	return term.IsTerminal(fd)
-}
-
-// Only use in the message!
-func colorizeIPClass(class string) string {
-	switch class {
+func (geo *GeoIPData) PrintColorStatus() {
+	var color string
+	switch geo.IPClass {
 	case "cache_hit":
-		return colorGreen + class + colorReset
+		color = colorGreen
 	case "cache_miss":
-		return colorRed + class + colorReset
+		color = colorRed
 	case "non-routable":
-		return colorBrightMagenta + class + colorReset
+		color = colorBrightMagenta
 	case "local":
-		return colorBlue + class + colorReset
+		color = colorBlue
 	default:
-		return class
+		color = colorReset
 	}
+	fmt.Printf("%sGeoIP [%s]: %s | %s, %s | ISP: %s%s\n",
+		color, geo.IPClass, geo.IP, geo.City, geo.CountryCode, geo.ISP, colorReset)
 }
