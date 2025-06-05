@@ -63,14 +63,10 @@ func TestCheckRedisCache(t *testing.T) {
 	mockData := GeoIPData{
 		IP:          mockIP,
 		ISP:         "Google",
-		Org:         "Google LLC",
-		Hostname:    "dns.google",
 		City:        "Mountain View",
 		CountryCode: "US",
 		CountryName: "United States",
 		Success:     true,
-		Located:     true,
-		Routable:    true,
 		IPClass:     "cache_hit",
 	}
 
@@ -95,14 +91,10 @@ func TestGetGeoData_CacheHit(t *testing.T) {
 	mockData := GeoIPData{
 		IP:          mockIP,
 		ISP:         "Google",
-		Org:         "Google LLC",
-		Hostname:    "dns.google",
 		City:        "Mountain View",
 		CountryCode: "US",
 		CountryName: "United States",
 		Success:     true,
-		Located:     true,
-		Routable:    true,
 		IPClass:     "cache_hit",
 	}
 
@@ -124,8 +116,6 @@ func TestGetGeoData_NonRoutable(t *testing.T) {
 	geo, err := loc.GetGeoData(ctx, "192.168.1.1")
 	assert.NoError(t, err)
 	assert.Equal(t, "non-routable", geo.IPClass)
-	assert.False(t, geo.Routable)
-	assert.False(t, geo.Located)
 }
 
 func TestGetGeoData_Local(t *testing.T) {
@@ -134,6 +124,5 @@ func TestGetGeoData_Local(t *testing.T) {
 	geo, err := loc.GetGeoData(ctx, "192.168.106.22")
 	assert.NoError(t, err)
 	assert.Equal(t, "local", geo.IPClass)
-	assert.False(t, geo.Routable)
 	assert.Equal(t, "Lewisville", geo.City)
 }
