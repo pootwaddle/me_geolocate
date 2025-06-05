@@ -25,7 +25,7 @@ type GeoLocator struct {
 }
 
 type GeoIPData struct {
-	IP          string `json:"ip"`
+	IP          string `json:"ip"` // IP address
 	ISP         string `json:"isp"`
 	Org         string `json:"org"`
 	Hostname    string `json:"hostname"`
