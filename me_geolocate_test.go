@@ -1,4 +1,4 @@
-package megeolocate
+package me_geolocate
 
 import (
 	"context"
