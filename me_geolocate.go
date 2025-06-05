@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -60,10 +61,13 @@ var (
 
 // ======= Constructor =======
 
-func NewGeoLocator(redisAddr string, ttlMinutes int, logger *slog.Logger) (*GeoLocator, error) {
+func NewGeoLocator(logger *slog.Logger) (*GeoLocator, error) {
+	redisAddr := os.Getenv("REDIS_CONF")
 	if redisAddr == "" {
-		return nil, errors.New("redisAddr cannot be empty")
+		redisAddr = "127.0.0.1:6379"
 	}
+	logger.Info("GeoLocator initializing", "redis_addr", redisAddr)
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 		DB:   0,
@@ -73,9 +77,10 @@ func NewGeoLocator(redisAddr string, ttlMinutes int, logger *slog.Logger) (*GeoL
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("redis ping failed: %w", err)
 	}
+
 	return &GeoLocator{
 		redis:  rdb,
-		ttl:    time.Duration(ttlMinutes) * time.Minute,
+		ttl:    180 * 24 * time.Hour, // optionally make this configurable later
 		logger: logger,
 	}, nil
 }
