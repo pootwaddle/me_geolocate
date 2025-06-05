@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"golang.org/x/term"
 )
 
 // ======= Types =======
@@ -247,7 +248,15 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 // ======= Logging Helpers =======
 
 func (g *GeoLocator) logGeo(geo *GeoIPData) {
-	g.logger.Info("GeoIP result",
+	status := geo.IPClass
+	if isTerminal(int(os.Stdout.Fd())) {
+		status = colorizeIPClass(geo.IPClass)
+	}
+	msg := fmt.Sprintf(
+		"GeoIP [%s]: %s | %s, %s | ISP: %s",
+		status, geo.IP, geo.City, geo.CountryCode, geo.ISP,
+	)
+	g.logger.Info(msg,
 		slog.String("ip", geo.IP),
 		slog.String("ip_class", geo.IPClass),
 		slog.String("country_code", geo.CountryCode),
@@ -256,17 +265,22 @@ func (g *GeoLocator) logGeo(geo *GeoIPData) {
 	)
 }
 
-func colorForIP(geo *GeoIPData) string {
-	switch geo.IPClass {
+func isTerminal(fd int) bool {
+	return term.IsTerminal(fd)
+}
+
+// Only use in the message!
+func colorizeIPClass(class string) string {
+	switch class {
 	case "cache_hit":
-		return colorGreen
+		return colorGreen + class + colorReset
 	case "cache_miss":
-		return colorRed
+		return colorRed + class + colorReset
 	case "non-routable":
-		return colorBrightMagenta
+		return colorBrightMagenta + class + colorReset
 	case "local":
-		return colorBlue
+		return colorBlue + class + colorReset
 	default:
-		return colorRed
+		return class
 	}
 }
