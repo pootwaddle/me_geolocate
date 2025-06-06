@@ -230,8 +230,9 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 // ======= Logging Helpers =======
 
 func (g *GeoLocator) logGeo(geo *GeoIPData) {
-	geo.PrintColorStatus() // Always print, always color
-	g.logger.Info("🌐 GeoIP result",
+	emoji := geo.PrintColorStatus() // Always print, always color, give us a corresponding emoji
+
+	g.logger.Info(emoji+" GeoIP result",
 		slog.String("ip", geo.IP),
 		slog.String("ip_class", geo.IPClass),
 		slog.String("country_code", geo.CountryCode),
@@ -241,20 +242,27 @@ func (g *GeoLocator) logGeo(geo *GeoIPData) {
 	)
 }
 
-func (geo *GeoIPData) PrintColorStatus() {
+func (geo *GeoIPData) PrintColorStatus() string {
 	var color string
+	var emoji string
 	switch geo.IPClass {
 	case "cache_hit":
 		color = colorGreen
+		emoji = "🟢"
 	case "cache_miss":
 		color = colorRed
+		emoji = "🔴"
 	case "non-routable":
 		color = colorBrightMagenta
+		emoji = "🦠"
 	case "local":
 		color = colorBlue
+		emoji = "🛡️"
 	default:
 		color = colorReset
+		emoji = "🌐"
 	}
 	fmt.Printf("GeoIP [%s%s%s]: %s, %s | ISP: %s\n",
 		color, geo.IP, colorReset, geo.CountryCode, geo.City, geo.ISP)
+	return emoji
 }
