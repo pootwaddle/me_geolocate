@@ -227,7 +227,7 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 	return nil
 }
 
-// ======= Logging Helpers =======
+// ======= Logging Helpers =========
 
 func (g *GeoLocator) logGeo(geo *GeoIPData) {
 	emoji := geo.PrintColorStatus() // Always print, always color, give us a corresponding emoji
