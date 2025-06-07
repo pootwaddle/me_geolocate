@@ -248,19 +248,19 @@ func (geo *GeoIPData) PrintColorStatus() string {
 	switch geo.IPClass {
 	case "cache_hit":
 		color = colorGreen
-		emoji = "🟢"
+		emoji = "✔️" // check mark — well-supported and visually clear
 	case "cache_miss":
 		color = colorRed
-		emoji = "🔴"
+		emoji = "❌" // red X — shows failure clearly
 	case "non-routable":
 		color = colorBrightMagenta
-		emoji = "🦠"
+		emoji = "🚫" // forbidden / blocked
 	case "local":
 		color = colorBlue
-		emoji = "🛡️"
+		emoji = "🏠" // house for local IPs
 	default:
 		color = colorReset
-		emoji = "🌐"
+		emoji = "❓" // fallback for unknowns
 	}
 	fmt.Printf("GeoIP [%s%s%s]: %s, %s | ISP: %s\n",
 		color, geo.IP, colorReset, geo.CountryCode, geo.City, geo.ISP)
