@@ -257,7 +257,7 @@ func (geo *GeoIPData) PrintColorStatus() string {
 		emoji = "🚫" // forbidden / blocked
 	case "local":
 		color = colorBlue
-		emoji = "🏠" // house for local IPs
+		emoji = "🔵" // house for local IPs
 	default:
 		color = colorReset
 		emoji = "❓" // fallback for unknowns
