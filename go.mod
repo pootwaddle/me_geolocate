@@ -1,6 +1,6 @@
 module github.com/pootwaddle/me_geolocate
 
-go 1.24.3
+go 1.25.3
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5
