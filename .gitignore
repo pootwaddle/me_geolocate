@@ -1,3 +1,22 @@
+# Binaries
 *.exe
+
+# Environment files
+.env/
 *.env
+
+# Log Files
+*.log
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+
+# Custom
+.tmp.*/
+.tmp.drive*/
+.tmp.drive*/*
+.trash/
 /research
+config.json

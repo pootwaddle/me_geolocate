@@ -33,3 +33,6 @@
 # Docker
 Dockerfile*   text=text eol=lf
 .dockerignore text=text eol=lf
+
+# Custom source files for website transcoding
+*.src      text=text eol=crlf
