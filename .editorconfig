@@ -19,3 +19,9 @@ indent_size = 4
 charset = utf-8
 indent_style = tab
 insert_final_newline = true
+
+[*.bat]
+end_of_line = crlf
+
+[*.src]
+end_of_line = crlf
