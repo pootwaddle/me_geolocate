@@ -19,9 +19,10 @@ import (
 // ======= Types =======
 
 type GeoLocator struct {
-	redis  *redis.Client
-	ttl    time.Duration
-	logger *slog.Logger
+	redis   *redis.Client
+	ttl     time.Duration
+	failTTL time.Duration
+	logger  *slog.Logger
 }
 
 type GeoIPData struct {
@@ -50,7 +51,15 @@ var (
 	colorGreen         = "\033[32m"
 	colorRed           = "\033[31m"
 	colorReset         = "\033[0m"
+
+	// httpClient bounds the remote lookup; http.DefaultClient has no timeout
+	// and a stalled geoip service would hang callers forever.
+	httpClient = &http.Client{Timeout: 10 * time.Second}
 )
+
+// failKeyPrefix marks a recent failed remote lookup, kept apart from the
+// success entry (keyed by the bare IP) so it can expire much sooner.
+const failKeyPrefix = "geofail:"
 
 // ======= Constructor =======
 
@@ -72,9 +81,10 @@ func NewGeoLocator(logger *slog.Logger) (*GeoLocator, error) {
 	}
 
 	return &GeoLocator{
-		redis:  rdb,
-		ttl:    180 * 24 * time.Hour, // optionally make this configurable later
-		logger: logger,
+		redis:   rdb,
+		ttl:     180 * 24 * time.Hour, // optionally make this configurable later
+		failTTL: 1 * time.Hour,        // retry failed lookups at most hourly
+		logger:  logger,
 	}, nil
 }
 
@@ -108,11 +118,21 @@ func (g *GeoLocator) GetGeoData(ctx context.Context, ip string) (GeoIPData, erro
 		return geo, nil
 	}
 
+	// A recent remote failure for this IP: don't hit the service again yet
+	if g.checkFailCache(ctx, &geo) {
+		g.logGeo(&geo)
+		return geo, nil
+	}
+
 	// Remote fetch
 	if err := geo.obtainGeoDat(ctx, g.logger); err != nil {
 		geo.Error = err.Error()
 	}
-	g.add2RedisCache(ctx, &geo)
+	if geo.CountryCode == "--" {
+		g.add2FailCache(ctx, &geo)
+	} else {
+		g.add2RedisCache(ctx, &geo)
+	}
 	g.logGeo(&geo)
 	return geo, nil
 }
@@ -142,6 +162,30 @@ func (g *GeoLocator) add2RedisCache(ctx context.Context, geo *GeoIPData) {
 		return
 	}
 	if err := g.redis.Set(ctx, geo.IP, b, g.ttl).Err(); err != nil {
+		g.logger.Error("redis Set failed", "ip", geo.IP, "err", err)
+	}
+}
+
+func (g *GeoLocator) checkFailCache(ctx context.Context, geo *GeoIPData) bool {
+	val, err := g.redis.Get(ctx, failKeyPrefix+geo.IP).Result()
+	if err != nil {
+		return false
+	}
+	if err := json.Unmarshal([]byte(val), geo); err != nil {
+		return false
+	}
+	geo.IPClass = "fail_cached"
+	return true
+}
+
+func (g *GeoLocator) add2FailCache(ctx context.Context, geo *GeoIPData) {
+	geo.IPClass = "cache_miss"
+	b, err := json.Marshal(geo)
+	if err != nil {
+		g.logger.Error("marshal for Redis", "ip", geo.IP, "err", err)
+		return
+	}
+	if err := g.redis.Set(ctx, failKeyPrefix+geo.IP, b, g.failTTL).Err(); err != nil {
 		g.logger.Error("redis Set failed", "ip", geo.IP, "err", err)
 	}
 }
@@ -192,7 +236,7 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Accept-Encoding", "gzip")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		logger.Error("HTTP request failed", "ip", geo.IP, "err", err)
 		return err
@@ -207,7 +251,12 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 	var reader io.ReadCloser
 	switch resp.Header.Get("Content-Encoding") {
 	case "gzip":
-		reader, _ = gzip.NewReader(resp.Body)
+		gz, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			geo.Error = fmt.Sprintf("Opening gzip response failed - %s", err)
+			return err
+		}
+		reader = gz
 	default:
 		reader = resp.Body
 	}
@@ -252,6 +301,9 @@ func (geo *GeoIPData) PrintColorStatus() string {
 	case "cache_miss":
 		color = colorRed
 		emoji = "❌" // red X — shows failure clearly
+	case "fail_cached":
+		color = colorRed
+		emoji = "⏳" // recent failure, waiting to retry
 	case "non-routable":
 		color = colorBrightMagenta
 		emoji = "🚫" // forbidden / blocked

@@ -24,7 +24,7 @@ type GeoIPData struct {
     CountryName string `json:"country_name"`
     Success     bool   `json:"success"`
     Error       string `json:"error"`
-    IPClass     string `json:"ip_class"`  // "local", "non-routable", "cache_hit", "cache_miss"
+    IPClass     string `json:"ip_class"`  // "local", "non-routable", "cache_hit", "cache_miss", "fail_cached"
 }
 ```
 
@@ -37,11 +37,13 @@ type GeoIPData struct {
 2. **non-routable** - RFC1918 addresses (192.168.*, 10.*, 172.16-31.*) - returns error
 3. **cache_hit** - Found in Redis
 4. **cache_miss** - Fetched from `json.geoiplookup.io` and cached
+5. **fail_cached** - A remote lookup for this IP failed within the last hour (`geofail:<ip>` key); returned without re-calling the API
 
 ## Configuration
 
 - `REDIS_CONF` env var: Redis address (default `127.0.0.1:6379`)
-- Cache TTL: 180 days (hardcoded)
+- Cache TTL: 180 days for successful lookups; failed lookups are cached separately under `geofail:<ip>` for 1 hour (both hardcoded)
+- Remote lookups use an HTTP client with a 10s timeout
 - API: `https://json.geoiplookup.io/{ip}` (supports gzip)
 
 ## Build Commands

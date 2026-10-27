@@ -126,3 +126,28 @@ func TestGetGeoData_Local(t *testing.T) {
 	assert.Equal(t, "local", geo.IPClass)
 	assert.Equal(t, "Lewisville", geo.City)
 }
+
+func TestGetGeoData_FailCacheSkipsRemote(t *testing.T) {
+	loc := newTestGeoLocator(t)
+	ctx := context.Background()
+	// TEST-NET-3 address, never a real sender
+	mockIP := "203.0.113.77"
+	loc.redis.Del(ctx, mockIP)
+
+	failed := GeoIPData{IP: mockIP, ISP: "-----", City: "-----", CountryCode: "--", CountryName: "-----", Error: "Invalid response 429 from geoip service"}
+	jsonVal, _ := json.Marshal(failed)
+	if err := loc.redis.Set(ctx, failKeyPrefix+mockIP, jsonVal, 1*time.Minute).Err(); err != nil {
+		t.Fatalf("redis Set failed: %v", err)
+	}
+	defer loc.redis.Del(ctx, failKeyPrefix+mockIP)
+
+	geo, err := loc.GetGeoData(ctx, mockIP)
+	assert.NoError(t, err)
+	assert.Equal(t, "fail_cached", geo.IPClass)
+	assert.Equal(t, "--", geo.CountryCode)
+	assert.Contains(t, geo.Error, "429")
+}
+
+func TestHTTPClientHasTimeout(t *testing.T) {
+	assert.NotZero(t, httpClient.Timeout, "remote geo lookups must be bounded")
+}
