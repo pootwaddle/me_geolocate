@@ -145,7 +145,7 @@ func (g *GeoLocator) checkRedisCache(ctx context.Context, geo *GeoIPData) bool {
 		geo.IPClass = "cache_miss"
 		return false
 	}
-	if err := json.Unmarshal([]byte(val), geo); err != nil {
+	if err := unmarshalGeo([]byte(val), geo, g.logger, "redis"); err != nil {
 		g.logger.Error("unmarshal Redis", "ip", geo.IP, "err", err)
 		geo.IPClass = "cache_miss"
 		return false
@@ -171,7 +171,7 @@ func (g *GeoLocator) checkFailCache(ctx context.Context, geo *GeoIPData) bool {
 	if err != nil {
 		return false
 	}
-	if err := json.Unmarshal([]byte(val), geo); err != nil {
+	if err := unmarshalGeo([]byte(val), geo, g.logger, "redis_fail"); err != nil {
 		return false
 	}
 	geo.IPClass = "fail_cached"
@@ -268,7 +268,7 @@ func (geo *GeoIPData) obtainGeoDat(ctx context.Context, logger *slog.Logger) err
 		return err
 	}
 
-	if err := json.Unmarshal(b, geo); err != nil {
+	if err := unmarshalGeo(b, geo, logger, "geoiplookup"); err != nil {
 		logger.Error("Unmarshal failed", "ip", geo.IP, "err", err)
 		return err
 	}
